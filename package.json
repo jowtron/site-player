@@ -1,0 +1,17 @@
+{
+  "name": "site-player",
+  "version": "0.1.0",
+  "description": "Audio player for band and artist websites on Cloudflare Workers, with private R2 audio and play stats",
+  "type": "module",
+  "exports": {
+    "./worker": "./worker.js",
+    "./stats": "./stats.js",
+    "./build": "./build.mjs",
+    "./player.js": "./player.js",
+    "./player.css": "./player.css",
+    "./schema.sql": "./schema.sql"
+  },
+  "files": ["player.js", "player.css", "worker.js", "stats.js", "build.mjs", "schema.sql", "tools"],
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/jowtron/site-player.git" }
+}
