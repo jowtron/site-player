@@ -1,7 +1,7 @@
 // site-player, build-time helpers (Node 20+, no dependencies).
 //
 //   import { copyAssets, writeAlbums } from 'site-player/build';
-//   copyAssets((rel, data) => write(`assets/${rel}`, data));      // player.js, player.css
+//   copyAssets((rel, data) => write(`assets/${rel}`, data));      // player.js, player.css, hits.js
 //   await writeAlbums({ bandcamp: 'thegoodbehaviours', slugs: ['home'],
 //                       audioDir: 'research/audio', write });
 //
@@ -23,7 +23,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENT = { '&quot;': '"', '&amp;': '&', '&#39;': "'", '&lt;': '<', '&gt;': '>' };
 
 export function copyAssets(write) {
-  for (const f of ['player.js', 'player.css']) write(f, fs.readFileSync(path.join(HERE, f)));
+  for (const f of ['player.js', 'player.css', 'hits.js']) write(f, fs.readFileSync(path.join(HERE, f)));
 }
 
 export async function writeAlbums({ bandcamp, slugs, audioDir, write, out = (slug) => `assets/albums/${slug}.json` }) {

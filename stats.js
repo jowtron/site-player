@@ -91,7 +91,7 @@ async function data(request, env, o, days) {
            SUM(event = 'start') AS starts, SUM(event = 'stream') AS streams, SUM(event = 'complete') AS completes
          FROM plays WHERE ts >= ? GROUP BY album, n ORDER BY streams DESC, starts DESC`, since),
       q(`SELECT ts / 3600000 AS hour, SUM(event = 'stream') AS streams FROM plays WHERE ts >= ? GROUP BY hour`, since),
-      q(`SELECT country, COUNT(*) AS streams FROM plays WHERE ts >= ? AND event = 'stream' GROUP BY country ORDER BY streams DESC LIMIT 10`, since),
+      q(`SELECT city, region, country, COUNT(*) AS streams FROM plays WHERE ts >= ? AND event = 'stream' GROUP BY city, region, country ORDER BY streams DESC LIMIT 15`, since),
       q(`SELECT path, COUNT(*) AS starts FROM plays WHERE ts >= ? AND event = 'start' GROUP BY path ORDER BY starts DESC LIMIT 10`, since),
       q(`SELECT SUM(event = 'stream') AS streams, MIN(ts) AS first FROM plays`),
     ]);
@@ -101,6 +101,13 @@ async function data(request, env, o, days) {
       try { titles[slug] = (await (await env.ASSETS.fetch(new URL(o.albumJson(slug), request.url))).json()).title; } catch { /* keep the slug */ }
     }));
     for (const t of tracks) t.albumTitle = titles[t.album] || t.album;
+    // Page views and clicks counted by the site itself (hits.js).
+    const [towns, clicks, views] = await Promise.all([
+      q(`SELECT city, region, country, COUNT(*) AS views FROM hits WHERE ts >= ? AND kind = 'view' GROUP BY city, region, country ORDER BY views DESC LIMIT 15`, since),
+      q(`SELECT target, COUNT(*) AS clicks FROM hits WHERE ts >= ? AND kind = 'click' GROUP BY target ORDER BY clicks DESC LIMIT 15`, since),
+      q(`SELECT COUNT(*) AS views FROM hits WHERE ts >= ? AND kind = 'view'`, since),
+    ]).catch(() => [[], [], [{ views: 0 }]]); // a database from v0.1.0 has no hits table
+    out.hits = { towns, clicks, views: views[0].views };
     out.plays = { tracks, byDay: perDay(o, days, byDay.map((x) => [x.hour * 3600e3, x.streams])), countries, pages, allTime: allTime[0] };
   }
   if (env.STATS_API_TOKEN && env.CF_ACCOUNT_ID && env.RUM_SITE_TAG) {
@@ -221,7 +228,7 @@ td.name { white-space: normal; }
 <header><h1>${esc(o.title)} · stats</h1><span class="who">Signed in as ${esc(who)}</span></header>
 <div class="range" role="group" aria-label="Period">${DAYS.map((d) => `<button type="button" data-days="${d}" aria-pressed="${d === 30}">${d === 1 ? 'Today' : `${d} days`}</button>`).join('')}</div>
 <div id="out"><p class="note">Loading…</p></div>
-<p class="note">Visits come from Cloudflare Web Analytics: no cookies, and people with tracker blockers aren't counted. A stream is a track heard for 30 seconds or more; a start is any press of play. Plays are anonymous.</p>
+<p class="note">Visits, pages, sources, countries and devices come from Cloudflare Web Analytics, which people with tracker blockers don't show up in. Towns, links clicked and plays are counted by the site itself: towns come from Cloudflare's lookup of each visit, and no IP address, cookie or visitor id is kept. A stream is a track heard for 30 seconds or more; a start is any press of play.</p>
 </div>
 <script>
 (function () {
@@ -231,6 +238,13 @@ td.name { white-space: normal; }
   var names = null;
   try { names = new Intl.DisplayNames(undefined, { type: 'region' }); } catch (e) { /* older browsers: codes */ }
   var country = function (c) { if (!c) return 'Unknown'; try { return names ? names.of(c) : c; } catch (e) { return c; } };
+  // "Marrickville, New South Wales" at home; the country added abroad.
+  var home = null;
+  var town = function (x) {
+    var parts = [x.city, x.region].filter(Boolean);
+    if (x.country && x.country !== home) parts.push(country(x.country));
+    return parts.join(', ') || country(x.country);
+  };
   function rows(list, label, value) {
     if (!list || !list.length) return '<p class="empty">Nothing yet.</p>';
     var max = Math.max.apply(null, list.map(value)) || 1;
@@ -242,7 +256,10 @@ td.name { white-space: normal; }
     return '<div class="chart">' + list.map(function (x) { return '<div style="height:' + (100 * value(x) / max).toFixed(1) + '%" data-tip="' + esc(tip(x)) + '"></div>'; }).join('') + '</div>';
   }
   function draw(d) {
-    var v = d.visits, p = d.plays, h = '';
+    var v = d.visits, p = d.plays, hi = d.hits, h = '';
+    // The country most visits come from is "home": its name is left off towns.
+    var first = (hi && hi.towns[0]) || (p && p.countries[0]);
+    home = first ? first.country : null;
     var t = v && !v.error && v.totals && v.totals[0];
     var streams = p ? p.tracks.reduce(function (s, x) { return s + (x.streams || 0); }, 0) : 0;
     var starts = p ? p.tracks.reduce(function (s, x) { return s + (x.starts || 0); }, 0) : 0;
@@ -267,8 +284,12 @@ td.name { white-space: normal; }
       h += '<div class="card"><h2>Visitors\\' countries</h2>' + rows(v.countries, function (x) { return country(x.dimensions.countryName); }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Devices</h2>' + rows(v.devices, function (x) { return x.dimensions.deviceType; }, function (x) { return x.sum.visits; }) + '</div>';
     }
+    if (hi) {
+      h += '<div class="card"><h2>Where visitors are</h2>' + rows(hi.towns, town, function (x) { return x.views; }) + '</div>';
+      h += '<div class="card"><h2>Links clicked</h2>' + rows(hi.clicks, function (x) { return x.target === 'mailto' ? 'Email links' : x.target === 'tel' ? 'Phone links' : x.target.replace(/\\/$/, ''); }, function (x) { return x.clicks; }) + '</div>';
+    }
     if (p) {
-      h += '<div class="card"><h2>Listeners\\' countries</h2>' + rows(p.countries, function (x) { return country(x.country); }, function (x) { return x.streams; }) + '</div>';
+      h += '<div class="card"><h2>Where listeners are</h2>' + rows(p.countries, town, function (x) { return x.streams; }) + '</div>';
       h += '<div class="card"><h2>Pages where play was pressed</h2>' + rows(p.pages, function (x) { return x.path; }, function (x) { return x.starts; }) + '</div>';
     }
     out.innerHTML = h + '</div>';

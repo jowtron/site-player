@@ -1,24 +1,7 @@
--- site-player's tables. A new database: run this file. One made with
--- v0.1.0: run migrations/0.2.0.sql instead.
---
--- Play counts (worker.js, POST /api/plays). One row per event, anonymous:
--- no IP, no cookie, no visitor id.
---   event: start (it began playing), stream (30 seconds heard, the way
---          streaming services count a play), complete (played to the end)
---   ts:    milliseconds since 1970 (UTC)
-CREATE TABLE IF NOT EXISTS plays (
-  id      INTEGER PRIMARY KEY,
-  ts      INTEGER NOT NULL,
-  event   TEXT    NOT NULL,
-  album   TEXT    NOT NULL,
-  n       INTEGER NOT NULL,
-  title   TEXT    NOT NULL,
-  country TEXT    NOT NULL DEFAULT '',
-  region  TEXT    NOT NULL DEFAULT '',
-  city    TEXT    NOT NULL DEFAULT '',
-  path    TEXT    NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS plays_ts ON plays (ts);
+-- v0.1.0 → v0.2.0: where plays happen (region, city) and the hits table.
+--   wrangler d1 execute <db> --remote --file node_modules/site-player/migrations/0.2.0.sql
+ALTER TABLE plays ADD COLUMN region TEXT NOT NULL DEFAULT '';
+ALTER TABLE plays ADD COLUMN city TEXT NOT NULL DEFAULT '';
 
 -- Page views and link clicks (hits.js → worker.js, POST /api/hit), also
 -- anonymous. Where someone is comes from Cloudflare's own lookup of the

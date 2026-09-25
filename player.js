@@ -384,6 +384,8 @@
         else if (target) target.scrollIntoView();
         else window.scrollTo(0, 0);
         opts.afterSwap(doc);
+        // For hits.js (a page view) and anything else that counts pages.
+        document.dispatchEvent(new CustomEvent('siteplayer:swap', { detail: { url: url } }));
         placeDock();
         expand(false);
         prefetch();
