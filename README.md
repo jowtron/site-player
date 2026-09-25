@@ -27,7 +27,7 @@ No framework and no runtime dependencies. The browser side is one script and one
 ## Adding it to a site
 
 ```sh
-npm install github:jowtron/site-player#v0.2.0
+npm install github:jowtron/site-player#v0.2.1
 ```
 
 **1. Build.** Copy the player's files into the site and write each album's track list:
@@ -111,6 +111,7 @@ export default {
 
 ## Versions
 
+- **v0.2.1** (2026-09-26): visits leave out the stats page's own views, and Access's sign-in page isn't listed as a source.
 - **v0.2.0** (2026-09-26): towns on plays; `hits.js` and `/api/hit` (page views and outbound clicks, with towns); stats cards for them. Existing databases: `wrangler d1 execute <db> --remote --file node_modules/site-player/migrations/0.2.0.sql`.
 - **v0.1.0** (2026-09-26): extracted from The Good Behaviours' site.
 

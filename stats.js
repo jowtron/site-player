@@ -111,7 +111,7 @@ async function data(request, env, o, days) {
     out.plays = { tracks, byDay: perDay(o, days, byDay.map((x) => [x.hour * 3600e3, x.streams])), countries, pages, allTime: allTime[0] };
   }
   if (env.STATS_API_TOKEN && env.CF_ACCOUNT_ID && env.RUM_SITE_TAG) {
-    out.visits = await visits(env, since).catch((e) => ({ error: String(e.message || e) }));
+    out.visits = await visits(env, since, o.path).catch((e) => ({ error: String(e.message || e) }));
     if (out.visits.hours) {
       out.visits.days = perDay(o, days, out.visits.hours.map((x) => [Date.parse(x.dimensions.datetimeHour), x.sum.visits]));
       delete out.visits.hours;
@@ -141,11 +141,11 @@ function perDay(o, days, hourly) {
 // ⚠ Asked in pieces of at most 7 days, added up here. A single query over
 // more than 7 days is answered from a different, lagging table: on
 // 2026-09-26 the last 7 days showed 46 page views and the last 8 days 10.
-async function visits(env, since) {
+async function visits(env, since, statsPath) {
   const until = Date.now();
   const spans = [];
   for (let a = since; a < until; a += 7 * 86400e3) spans.push([a, Math.min(until, a + 7 * 86400e3)]);
-  const parts = await Promise.all(spans.map(([a, b]) => visitsSpan(env, a, b)));
+  const parts = await Promise.all(spans.map(([a, b]) => visitsSpan(env, a, b, statsPath)));
   // Merge the pieces: sum every group by its dimension value.
   const merge = (name, key, sortBy, limit) => {
     const m = new Map();
@@ -164,13 +164,16 @@ async function visits(env, since) {
     totals: merge('totals', () => 'all'),
     hours: merge('hours', byDim('datetimeHour')),
     pages: merge('pages', byDim('requestPath'), (x) => x.count, 12),
-    refs: merge('refs', byDim('refererHost'), (x) => x.sum.visits).filter((x) => x.sum.visits > 0).slice(0, 12), // page-to-page moves inside the site count 0
+    // Page-to-page moves inside the site count 0 visits; Cloudflare Access's
+    // sign-in page (coming back from signing in to the stats) isn't a source.
+    refs: merge('refs', byDim('refererHost'), (x) => x.sum.visits).filter((x) => x.sum.visits > 0 && !/\.cloudflareaccess\.com$/.test(x.dimensions.refererHost)).slice(0, 12),
     countries: merge('countries', byDim('countryName'), (x) => x.sum.visits, 10),
     devices: merge('devices', byDim('deviceType'), (x) => x.sum.visits, 5),
   };
 }
-async function visitsSpan(env, since, until) {
-  const f = '{siteTag:$site,datetime_geq:$since,datetime_lt:$until}';
+async function visitsSpan(env, since, until, statsPath) {
+  // The stats page's own views (its sign-in included) aren't visits.
+  const f = `{siteTag:$site,datetime_geq:$since,datetime_lt:$until,requestPath_notlike:${JSON.stringify(statsPath + '%')}}`;
   const g = (name, limit, order, dims) => `${name}:rumPageloadEventsAdaptiveGroups(limit:${limit},filter:${f}${order ? `,orderBy:[${order}]` : ''}){count sum{visits}${dims ? ` dimensions{${dims}}` : ''}}`;
   const query = `query($acc:String!,$site:String!,$since:Time!,$until:Time!){viewer{accounts(filter:{accountTag:$acc}){
     ${g('totals', 1)} ${g('hours', 200, 'datetimeHour_ASC', 'datetimeHour')} ${g('pages', 50, 'count_DESC', 'requestPath')}

@@ -1,6 +1,6 @@
 {
   "name": "site-player",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Audio player for band and artist websites on Cloudflare Workers, with private R2 audio and play stats",
   "type": "module",
   "exports": {
