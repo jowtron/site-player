@@ -27,7 +27,7 @@ No framework and no runtime dependencies. The browser side is one script and one
 ## Adding it to a site
 
 ```sh
-npm install github:jowtron/site-player#v0.2.1
+npm install github:jowtron/site-player#v0.2.2
 ```
 
 **1. Build.** Copy the player's files into the site and write each album's track list:
@@ -68,7 +68,7 @@ Once a player is open, links swap pages in without a reload so the music carries
 import { playerRoutes } from 'site-player/worker';
 import { statsRoutes } from 'site-player/stats';
 const player = playerRoutes({ albums: ['home'] });
-const stats = statsRoutes({ title: 'The Good Behaviours' });
+const stats = statsRoutes({ title: 'The Good Behaviours', sources: { 'cf-email.example': 'Back from newsletter signup' } });
 export default {
   async fetch(request, env, ctx) {
     return (await player(request, env, ctx)) || (await stats(request, env)) || siteRoutes(request, env, ctx);
@@ -111,6 +111,7 @@ export default {
 
 ## Versions
 
+- **v0.2.2** (2026-09-26): "Where visitors came from" leaves out the site's own addresses (a visit "from" the bare domain was someone crossing to www through the redirect), and `sources` names referring hosts, e.g. a newsletter service's confirmation page.
 - **v0.2.1** (2026-09-26): visits leave out the stats page's own views, and Access's sign-in page isn't listed as a source.
 - **v0.2.0** (2026-09-26): towns on plays; `hits.js` and `/api/hit` (page views and outbound clicks, with towns); stats cards for them. Existing databases: `wrangler d1 execute <db> --remote --file node_modules/site-player/migrations/0.2.0.sql`.
 - **v0.1.0** (2026-09-26): extracted from The Good Behaviours' site.

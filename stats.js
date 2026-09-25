@@ -29,7 +29,9 @@ const DAYS = [1, 7, 30, 90];
 
 export function statsRoutes(options = {}) {
   // timeZone: the days the charts are grouped into (daylight saving included).
-  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, ...options };
+  // sources: names for referring hosts under "Where visitors came from",
+  // e.g. { 'cf-email.example': 'Back from newsletter signup' }.
+  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, ...options };
   return async function (request, env) {
     const url = new URL(request.url);
     if (url.pathname !== o.path && !url.pathname.startsWith(o.path + '/')) return null;
@@ -111,7 +113,7 @@ async function data(request, env, o, days) {
     out.plays = { tracks, byDay: perDay(o, days, byDay.map((x) => [x.hour * 3600e3, x.streams])), countries, pages, allTime: allTime[0] };
   }
   if (env.STATS_API_TOKEN && env.CF_ACCOUNT_ID && env.RUM_SITE_TAG) {
-    out.visits = await visits(env, since, o.path).catch((e) => ({ error: String(e.message || e) }));
+    out.visits = await visits(env, since, o, new URL(request.url).hostname).catch((e) => ({ error: String(e.message || e) }));
     if (out.visits.hours) {
       out.visits.days = perDay(o, days, out.visits.hours.map((x) => [Date.parse(x.dimensions.datetimeHour), x.sum.visits]));
       delete out.visits.hours;
@@ -141,7 +143,12 @@ function perDay(o, days, hourly) {
 // ⚠ Asked in pieces of at most 7 days, added up here. A single query over
 // more than 7 days is answered from a different, lagging table: on
 // 2026-09-26 the last 7 days showed 46 page views and the last 8 days 10.
-async function visits(env, since, statsPath) {
+async function visits(env, since, o, host) {
+  const statsPath = o.path;
+  // The site's own addresses (www and bare) aren't sources: a visit "from"
+  // one is someone crossing between them, e.g. through the bare → www redirect.
+  const base = host.replace(/^www\./, '');
+  const own = (h) => h === base || h.endsWith('.' + base);
   const until = Date.now();
   const spans = [];
   for (let a = since; a < until; a += 7 * 86400e3) spans.push([a, Math.min(until, a + 7 * 86400e3)]);
@@ -166,7 +173,10 @@ async function visits(env, since, statsPath) {
     pages: merge('pages', byDim('requestPath'), (x) => x.count, 12),
     // Page-to-page moves inside the site count 0 visits; Cloudflare Access's
     // sign-in page (coming back from signing in to the stats) isn't a source.
-    refs: merge('refs', byDim('refererHost'), (x) => x.sum.visits).filter((x) => x.sum.visits > 0 && !/\.cloudflareaccess\.com$/.test(x.dimensions.refererHost)).slice(0, 12),
+    refs: merge('refs', byDim('refererHost'), (x) => x.sum.visits)
+      .filter((x) => x.sum.visits > 0 && !/\.cloudflareaccess\.com$/.test(x.dimensions.refererHost) && !own(x.dimensions.refererHost))
+      .slice(0, 12)
+      .map((x) => (o.sources[x.dimensions.refererHost] ? { ...x, label: o.sources[x.dimensions.refererHost] } : x)),
     countries: merge('countries', byDim('countryName'), (x) => x.sum.visits, 10),
     devices: merge('devices', byDim('deviceType'), (x) => x.sum.visits, 5),
   };
@@ -283,7 +293,7 @@ td.name { white-space: normal; }
     if (v && !v.error) {
       h += '<div class="card"><h2>Visits by day</h2>' + chart(v.days, function (x) { return x.n; }, function (x) { return x.day + ': ' + x.n; }) + '</div>';
       h += '<div class="card"><h2>Pages</h2>' + rows(v.pages, function (x) { return x.dimensions.requestPath; }, function (x) { return x.count; }) + '</div>';
-      h += '<div class="card"><h2>Where visitors came from</h2>' + rows(v.refs, function (x) { return x.dimensions.refererHost || 'Direct or unknown'; }, function (x) { return x.sum.visits; }) + '</div>';
+      h += '<div class="card"><h2>Where visitors came from</h2>' + rows(v.refs, function (x) { return x.label || x.dimensions.refererHost || 'Direct or unknown'; }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Visitors\\' countries</h2>' + rows(v.countries, function (x) { return country(x.dimensions.countryName); }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Devices</h2>' + rows(v.devices, function (x) { return x.dimensions.deviceType; }, function (x) { return x.sum.visits; }) + '</div>';
     }
