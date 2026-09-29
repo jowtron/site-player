@@ -30,7 +30,8 @@
 
      SitePlayer.init({
        artist: 'The Good Behaviours',   // lock screen, and the player's second line
-       albumUrl: '/api/album/',         // default
+       albumUrl: '/api/album/',         // default; or a function, slug → URL
+                                        // (a static site: s => '/albums/' + s + '.json')
        playsUrl: '/api/plays',          // default; '' turns counting off
        defaultUrl: '/music/',           // "Album notes and credits" when a button has no data-url
        dockSlot: '.site-header .mp-slot', // where the tucked-away button goes
@@ -69,7 +70,8 @@
 
   function loadAlbum(slug, fresh) {
     if (!albums[slug] || fresh) {
-      albums[slug] = fetch(opts.albumUrl + slug + (fresh ? '?fresh' : ''))
+      var url = typeof opts.albumUrl === 'function' ? opts.albumUrl(slug) : opts.albumUrl + slug;
+      albums[slug] = fetch(url + (fresh ? '?fresh' : ''))
         .then(function (r) { return r.json(); })
         .then(function (d) { if (!d.ok) throw new Error(d.message); return d; });
       albums[slug].catch(function () { delete albums[slug]; });
@@ -433,5 +435,15 @@
     render();
   }
 
-  window.SitePlayer = { init: init };
+  window.SitePlayer = {
+    init: init,
+    // For visualisers and the like. Read them, don't drive them: play buttons
+    // and the player's own controls stay in charge.
+    audio: audio,
+    // What's playing: { slug, index, title, track } (track as in the album
+    // data, extra fields included), or null.
+    current: function () {
+      return now && { slug: now.slug, index: now.index, title: now.title, track: now.tracks[now.index] };
+    },
+  };
 })();
