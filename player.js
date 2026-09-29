@@ -278,6 +278,9 @@
     render();
   }
 
+  // Text only changes when it differs, for the same reason as the icons below.
+  function setText(el, text) { if (el && el.textContent !== text) el.textContent = text; }
+
   // Everything that shows the player's state: the player, the tucked-away
   // button, the Play buttons and the track lists. Cheap enough to run on
   // every progress tick.
@@ -287,13 +290,20 @@
     root.classList.toggle('is-playing', playing);
     if (player && now) {
       var t = now.tracks[now.index];
-      player.querySelector('.mp-track').textContent = t.title;
-      player.querySelector('.mp-album').textContent = opts.artist ? now.title + ' · ' + opts.artist : now.title;
+      setText(player.querySelector('.mp-track'), t.title);
+      setText(player.querySelector('.mp-album'), opts.artist ? now.title + ' · ' + opts.artist : now.title);
+      // ⚠ Only redraw an icon when the state changes: render() runs several
+      // times a second, and swapping the icon out between a press and its
+      // release loses the click (half the Pause presses, 2026-09-30).
       var tog = player.querySelector('.mp-toggle');
-      tog.innerHTML = playing ? ICON.pause : ICON.play;
-      tog.setAttribute('aria-label', playing ? 'Pause' : 'Play');
-      player.querySelector('.mp-now').textContent = fmt(audio.currentTime);
-      player.querySelector('.mp-dur').textContent = fmt(isFinite(audio.duration) ? audio.duration : t.duration);
+      var state = playing ? 'playing' : 'paused';
+      if (tog.dataset.state !== state) {
+        tog.dataset.state = state;
+        tog.innerHTML = playing ? ICON.pause : ICON.play;
+        tog.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+      }
+      setText(player.querySelector('.mp-now'), fmt(audio.currentTime));
+      setText(player.querySelector('.mp-dur'), fmt(isFinite(audio.duration) ? audio.duration : t.duration));
       var seek = player.querySelector('.mp-seek');
       if (document.activeElement !== seek) seek.value = Math.round(p * 1000);
       player.style.setProperty('--p', p.toFixed(4));
@@ -319,9 +329,14 @@
         var svg = b.querySelector('svg');
         if (label) {
           if (!b.dataset.label) b.dataset.label = label.textContent;
-          label.textContent = current && playing ? 'Pause' : b.dataset.label;
+          var text = current && playing ? 'Pause' : b.dataset.label;
+          setText(label, text);
         }
-        if (svg) svg.outerHTML = current && playing ? ICON.pause : ICON.play;
+        var bState = current && playing ? 'playing' : 'paused';
+        if (svg && b.dataset.state !== bState) {
+          b.dataset.state = bState;
+          svg.outerHTML = current && playing ? ICON.pause : ICON.play;
+        }
       }
     });
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : (now ? 'paused' : 'none');

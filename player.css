@@ -197,3 +197,6 @@
   @keyframes sp-eq { from { height: 25%; } to { height: 100%; } }
 }
 @media (max-width: 899px) { .mp-dock { width: 44px; height: 44px; } }
+
+/* Presses land on the buttons, never on their icons (which render() swaps). */
+.mini-player svg, .mp-dock svg, .btn-play svg, .btn-play .bp-label, .track-play svg { pointer-events: none; }
