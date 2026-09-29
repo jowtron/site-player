@@ -22,7 +22,8 @@
 
    So it can keep playing from page to page, links swap pages in without a
    reload once a player is open: fetch the page, replace everything in <body>
-   except elements with data-persist, and call the site's beforeSwap() and
+   except elements with data-persist (the new page's copies of those are
+   dropped), and call the site's beforeSwap() and
    afterSwap() so it can tear down and set up its own page behaviour. Links
    behave normally whenever no player is open.
 
@@ -375,7 +376,9 @@
         opts.beforeSwap();
         $$(':scope > *', document.body).forEach(function (el) { if (!el.hasAttribute('data-persist')) el.remove(); });
         var before = document.body.firstChild;
-        $$(':scope > *', doc.body).forEach(function (el) { document.body.insertBefore(document.adoptNode(el), before); });
+        // The incoming page's own copies of the kept elements are left out,
+        // or every swap would add another (a second mock-up pill, sky, …).
+        $$(':scope > *', doc.body).forEach(function (el) { if (!el.hasAttribute('data-persist')) document.body.insertBefore(document.adoptNode(el), before); });
         document.title = doc.title;
         if (push) history.pushState({ sp: 1 }, '', url);
         pjaxed = true;

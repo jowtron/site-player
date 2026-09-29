@@ -111,6 +111,7 @@ export default {
 
 ## Versions
 
+- **v0.3.1** (2026-09-30): a page swap no longer adds the incoming page's own copies of `data-persist` elements (every swap used to add another mock-up pill or background layer).
 - **v0.3.0** (2026-09-29): `albumUrl` can be a function (slug → URL), so a site without the Worker routes can serve its albums as static JSON; `SitePlayer.audio` and `SitePlayer.current()` for visualisers (extra fields in a track's data come through).
 - **v0.2.2** (2026-09-26): "Where visitors came from" leaves out the site's own addresses (a visit "from" the bare domain was someone crossing to www through the redirect), and `sources` names referring hosts, e.g. a newsletter service's confirmation page.
 - **v0.2.1** (2026-09-26): visits leave out the stats page's own views, and Access's sign-in page isn't listed as a source.
