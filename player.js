@@ -8,7 +8,8 @@
 
    data-play-album is the album's slug, data-index the track (0-based; leave
    it off for "play the album"), data-art its cover and data-url the page
-   about it. Because the page owns the <audio>, everything can follow it: the
+   about it. A track whose data has "art" (an image URL) shows that picture
+   instead of the cover while it plays. Because the page owns the <audio>, everything can follow it: the
    track lists show the playing track and how far through it is, album
    buttons turn to Pause (a .btn-play with a .bp-label and an <svg> inside),
    the tucked-away button in the header animates only while music plays and
@@ -227,10 +228,17 @@
     resetCount();
     audio.src = src;
     audio.play().catch(function () { /* blocked or interrupted: the button shows Play */ });
+    // A track can carry its own picture ("art" in the album's data, e.g. a
+    // set of radio pieces); otherwise the album's cover from the button.
+    var art = t.art || now.art;
+    var img = player && player.querySelector('.mp-art img');
+    if (img && img.getAttribute('src') !== art) img.src = art;
     if ('mediaSession' in navigator) {
+      var ext = String(art || '').split('?')[0].split('.').pop().toLowerCase();
+      var type = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', avif: 'image/avif' }[ext] || 'image/webp';
       navigator.mediaSession.metadata = new MediaMetadata({
         title: t.title, artist: opts.artist, album: now.title,
-        artwork: [{ src: now.art, sizes: '600x600', type: 'image/webp' }],
+        artwork: [{ src: art, sizes: '600x600', type: type }],
       });
     }
     render();

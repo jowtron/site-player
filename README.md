@@ -50,6 +50,8 @@ await writeAlbums({ bandcamp: 'thegoodbehaviours', slugs: ['home'], audioDir: 'r
 </ol>
 ```
 
+A track can have its own picture: give it `art` (an image URL) in the album's data (`/assets/albums/<slug>.json`), and the player and lock screen show it while that track plays instead of the album's `data-art` (v0.3.3; for a set of separate pieces, like radio features).
+
 **3. Start it** from the site's script:
 
 ```js
@@ -111,6 +113,7 @@ export default {
 
 ## Versions
 
+- **v0.3.3** (2026-10-02): optional per-track pictures. A track in the album data with `art` (an image URL) shows it in the player and on the lock screen (Media Session) while it plays; tracks without one show the album cover from the button's `data-art`, as before.
 - **v0.3.2** (2026-09-30): Pause (and the page's Play/Pause buttons) work on the first press. The icons were redrawn several times a second while playing, and a redraw between press and release lost the click.
 - **v0.3.1** (2026-09-30): a page swap no longer adds the incoming page's own copies of `data-persist` elements (every swap used to add another mock-up pill or background layer).
 - **v0.3.0** (2026-09-29): `albumUrl` can be a function (slug → URL), so a site without the Worker routes can serve its albums as static JSON; `SitePlayer.audio` and `SitePlayer.current()` for visualisers (extra fields in a track's data come through).
