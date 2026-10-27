@@ -23,6 +23,19 @@
  *   RUM_SITE_TAG     the Web Analytics site, for visits
  *   STATS_API_TOKEN  secret: an API token with Account Analytics: Read.
  *                    Without it (or the two above) the page shows plays only.
+ *
+ * Options worth setting for visits:
+ *   homeCountry  e.g. 'AU'. Web Analytics counts any browser that runs the
+ *                page, crawlers driving a real browser included, and those
+ *                arrive from data centres abroad with no referrer and view
+ *                one page. With this set, a page view counts as a person's
+ *                when it's from this country or came from a link (another
+ *                site, or a page of this one); the rest is shown apart as
+ *                "probably automated". A guess, not a filter: someone
+ *                abroad who types the address in lands there too.
+ *   ignorePaths  exact paths that aren't pages people read, e.g. ['/player']
+ *                for a player in an iframe, which the beacon counts as a
+ *                page view every time a page loads.
  */
 
 const DAYS = [1, 7, 30, 90];
@@ -31,7 +44,7 @@ export function statsRoutes(options = {}) {
   // timeZone: the days the charts are grouped into (daylight saving included).
   // sources: names for referring hosts under "Where visitors came from",
   // e.g. { 'cf-email.example': 'Back from newsletter signup' }.
-  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, ...options };
+  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, homeCountry: null, ignorePaths: [], ...options };
   return async function (request, env) {
     const url = new URL(request.url);
     if (url.pathname !== o.path && !url.pathname.startsWith(o.path + '/')) return null;
@@ -114,6 +127,7 @@ async function data(request, env, o, days) {
   }
   if (env.STATS_API_TOKEN && env.CF_ACCOUNT_ID && env.RUM_SITE_TAG) {
     out.visits = await visits(env, since, o, new URL(request.url).hostname).catch((e) => ({ error: String(e.message || e) }));
+    if (o.homeCountry) out.visits.homeCountry = o.homeCountry;
     if (out.visits.hours) {
       out.visits.days = perDay(o, days, out.visits.hours.map((x) => [Date.parse(x.dimensions.datetimeHour), x.sum.visits]));
       delete out.visits.hours;
@@ -152,7 +166,7 @@ async function visits(env, since, o, host) {
   const until = Date.now();
   const spans = [];
   for (let a = since; a < until; a += 7 * 86400e3) spans.push([a, Math.min(until, a + 7 * 86400e3)]);
-  const parts = await Promise.all(spans.map(([a, b]) => visitsSpan(env, a, b, statsPath)));
+  const parts = await Promise.all(spans.map(([a, b]) => visitsSpan(env, a, b, o)));
   // Merge the pieces: sum every group by its dimension value.
   const merge = (name, key, sortBy, limit) => {
     const m = new Map();
@@ -169,6 +183,7 @@ async function visits(env, since, o, host) {
   const byDim = (d) => (x) => x.dimensions[d];
   return {
     totals: merge('totals', () => 'all'),
+    automated: o.homeCountry ? merge('automated', () => 'all') : null,
     hours: merge('hours', byDim('datetimeHour')),
     pages: merge('pages', byDim('requestPath'), (x) => x.count, 12),
     // Page-to-page moves inside the site count 0 visits; Cloudflare Access's
@@ -181,14 +196,21 @@ async function visits(env, since, o, host) {
     devices: merge('devices', byDim('deviceType'), (x) => x.sum.visits, 5),
   };
 }
-async function visitsSpan(env, since, until, statsPath) {
-  // The stats page's own views (its sign-in included) aren't visits.
-  const f = `{siteTag:$site,datetime_geq:$since,datetime_lt:$until,requestPath_notlike:${JSON.stringify(statsPath + '%')}}`;
-  const g = (name, limit, order, dims) => `${name}:rumPageloadEventsAdaptiveGroups(limit:${limit},filter:${f}${order ? `,orderBy:[${order}]` : ''}){count sum{visits}${dims ? ` dimensions{${dims}}` : ''}}`;
+async function visitsSpan(env, since, until, o) {
+  // The stats page's own views (its sign-in included) aren't visits, nor are
+  // ignorePaths. With homeCountry, every group below counts people only
+  // (see the options at the top), and 'automated' counts the rest.
+  const q = JSON.stringify;
+  let base = `siteTag:$site,datetime_geq:$since,datetime_lt:$until,requestPath_notlike:${q(o.path + '%')}`;
+  if (o.ignorePaths.length) base += `,requestPath_notin:${q(o.ignorePaths)}`;
+  const home = o.homeCountry ? q(o.homeCountry) : null;
+  const f = home ? `{${base},OR:[{countryName:${home}},{refererHost_neq:""}]}` : `{${base}}`;
+  const g = (name, limit, order, dims, filter = f) => `${name}:rumPageloadEventsAdaptiveGroups(limit:${limit},filter:${filter}${order ? `,orderBy:[${order}]` : ''}){count sum{visits}${dims ? ` dimensions{${dims}}` : ''}}`;
   const query = `query($acc:String!,$site:String!,$since:Time!,$until:Time!){viewer{accounts(filter:{accountTag:$acc}){
     ${g('totals', 1)} ${g('hours', 200, 'datetimeHour_ASC', 'datetimeHour')} ${g('pages', 50, 'count_DESC', 'requestPath')}
     ${g('refs', 50, 'sum_visits_DESC', 'refererHost')} ${g('countries', 50, 'sum_visits_DESC', 'countryName')}
-    ${g('devices', 5, 'sum_visits_DESC', 'deviceType')}}}}`;
+    ${g('devices', 5, 'sum_visits_DESC', 'deviceType')}
+    ${home ? g('automated', 1, null, null, `{${base},countryName_neq:${home},refererHost:""}`) : ''}}}}`;
   const variables = { acc: env.CF_ACCOUNT_ID, site: env.RUM_SITE_TAG, since: new Date(since).toISOString(), until: new Date(until).toISOString() };
   const r = await fetch('https://api.cloudflare.com/client/v4/graphql', {
     method: 'POST',
@@ -241,7 +263,7 @@ td.name { white-space: normal; }
 <header><h1>${esc(o.title)} · stats</h1><span class="who">Signed in as ${esc(who)}</span></header>
 <div class="range" role="group" aria-label="Period">${DAYS.map((d) => `<button type="button" data-days="${d}" aria-pressed="${d === 30}">${d === 1 ? 'Today' : `${d} days`}</button>`).join('')}</div>
 <div id="out"><p class="note">Loading…</p></div>
-<p class="note">Visits, pages, sources, countries and devices come from Cloudflare Web Analytics, which people with tracker blockers don't show up in. Towns, links clicked and plays are counted by the site itself: towns come from Cloudflare's lookup of each visit, and no IP address, cookie or visitor id is kept. A stream is a track heard for 30 seconds or more; a start is any press of play.</p>
+<p class="note">Visits, pages, sources, countries and devices come from Cloudflare Web Analytics, which people with tracker blockers don't show up in. A visit is someone arriving at the site; each page they then look at is a page view. Crawlers that drive a real browser get counted too, and can't be told apart for certain: where the page says "by people", page views from abroad that came from no link at all (the shape crawlers have) are left out and counted under "probably automated". Treat every number here as an estimate. Towns, links clicked and plays are counted by the site itself: towns come from Cloudflare's lookup of each visit, and no IP address, cookie or visitor id is kept. A stream is a track heard for 30 seconds or more; a start is any press of play.</p>
 </div>
 <script>
 (function () {
@@ -277,7 +299,9 @@ td.name { white-space: normal; }
     var streams = p ? p.tracks.reduce(function (s, x) { return s + (x.streams || 0); }, 0) : 0;
     var starts = p ? p.tracks.reduce(function (s, x) { return s + (x.starts || 0); }, 0) : 0;
     h += '<div class="kpis">';
-    if (v && !v.error) h += '<div class="kpi"><b>' + fmt(t ? t.sum.visits : 0) + '</b><span>visits</span></div><div class="kpi"><b>' + fmt(t ? t.count : 0) + '</b><span>page views</span></div>';
+    var bots = v && !v.error && v.automated ? v.automated[0] : null;
+    if (v && !v.error) h += '<div class="kpi"><b>' + fmt(t ? t.sum.visits : 0) + '</b><span>visits' + (v.homeCountry ? ' by people' : '') + '</span></div><div class="kpi"><b>' + fmt(t ? t.count : 0) + '</b><span>page views' + (v.homeCountry ? ' by people' : '') + '</span></div>';
+    if (v && !v.error && v.homeCountry) h += '<div class="kpi"><b>' + fmt(bots ? bots.sum.visits : 0) + '</b><span>probably automated, left out</span></div>';
     if (p) h += '<div class="kpi"><b>' + fmt(streams) + '</b><span>streams</span></div><div class="kpi"><b>' + fmt(starts) + '</b><span>plays started</span></div>' +
       '<div class="kpi"><b>' + fmt(p.allTime && p.allTime.streams) + '</b><span>streams, all time</span></div>';
     h += '</div>';

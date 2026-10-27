@@ -94,6 +94,7 @@ export default {
 ## The stats page
 
 - **Visits** come from Cloudflare Web Analytics. On a domain whose DNS is on Cloudflare it's usually already on: Cloudflare adds its beacon to every page by itself (check for `cloudflareinsights` in a page's source). The site tag is in the dashboard (Analytics & Logs → Web Analytics) or from `GET /accounts/<id>/rum/site_info/list`. The page reads the numbers through the GraphQL API, so it needs a secret `STATS_API_TOKEN`: an API token with **Account → Account Analytics → Read** for that account. Without it the page shows plays only.
+- **Bots.** Web Analytics counts any browser that runs the page, and crawlers that drive a real browser do: on emus.space in October 2026 they were 60% of all visits, from Singapore, US and other data centres, each one page with no referrer. Set `homeCountry` (e.g. `'AU'`) and the headline numbers count people only (page views from that country, or that came from a link), with the rest shown apart as "probably automated". It's a heuristic, not a filter: a reader abroad who types the address in is counted as automated. Set `ignorePaths` for anything the beacon sees that isn't a page people read, e.g. `['/player']` for a player kept in an iframe, which otherwise adds a page view to every page load.
 - **Plays, towns and clicks** come straight from D1; nothing to set up beyond the binding. Web Analytics only knows countries, and misses people with tracker blockers; `hits.js` is first-party, so blockers rarely stop it, and its counts run a little higher.
 - **Privacy.** Nothing that identifies a person is kept: no IP, cookie or id, just the town, the page, the time and the kind of device. It's still worth a line in the site's privacy notice if it has one.
 - **Who can see it:** Cloudflare Access (Zero Trust, free for up to 50 people).
@@ -114,6 +115,7 @@ export default {
 ## Versions
 
 - **v0.3.3** (2026-10-02): optional per-track pictures. A track in the album data with `art` (an image URL) shows it in the player and on the lock screen (Media Session) while it plays; tracks without one show the album cover from the button's `data-art`, as before.
+- **v0.3.4** (2026-10-27): stats options `homeCountry` (headline visits and page views count likely people; the rest is shown as "probably automated") and `ignorePaths` (paths left out of every visits figure). The page now says what a visit and a page view are, and that every number is an estimate. Without the options, nothing changes.
 - **v0.3.2** (2026-09-30): Pause (and the page's Play/Pause buttons) work on the first press. The icons were redrawn several times a second while playing, and a redraw between press and release lost the click.
 - **v0.3.1** (2026-09-30): a page swap no longer adds the incoming page's own copies of `data-persist` elements (every swap used to add another mock-up pill or background layer).
 - **v0.3.0** (2026-09-29): `albumUrl` can be a function (slug → URL), so a site without the Worker routes can serve its albums as static JSON; `SitePlayer.audio` and `SitePlayer.current()` for visualisers (extra fields in a track's data come through).
