@@ -23,7 +23,9 @@ CREATE INDEX IF NOT EXISTS plays_ts ON plays (ts);
 -- Page views and link clicks (hits.js → worker.js, POST /api/hit), also
 -- anonymous. Where someone is comes from Cloudflare's own lookup of the
 -- request (country, region, city); the IP itself is never stored.
---   kind:   view (a page was shown) or click (a link off the site)
+--   kind:   view (a page was shown), click (a link off the site) or arrive
+--           (a visit by a tagged link, e.g. a newsletter's; written by the
+--           site itself, target naming the link; stats.js `arrivals`)
 --   target: for a click, where it went (host and path, no query string)
 --   ref:    for a view, the site the visitor came from (host only)
 --   device: mobile, tablet or desktop, from the browser's user agent

@@ -43,6 +43,10 @@
  *   albumTitles  names for album slugs under Tracks, e.g. { radio: 'Radio
  *                show' }, for plays recorded by something other than
  *                worker.js (otherwise read from albumJson, else the slug).
+ *   arrivals     title for the card of visits that came by a tagged link,
+ *                e.g. 'From the newsletter': hits rows of kind 'arrive',
+ *                written by the site itself, with target naming the link
+ *                (e.g. 'Newsletter #280'). Set, the card shows while empty.
  */
 
 const DAYS = [1, 7, 30, 90];
@@ -51,7 +55,7 @@ export function statsRoutes(options = {}) {
   // timeZone: the days the charts are grouped into (daylight saving included).
   // sources: names for referring hosts under "Where visitors came from",
   // e.g. { 'cf-email.example': 'Back from newsletter signup' }.
-  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, homeCountry: null, ignorePaths: [], cacheSeconds: 600, albumTitles: {}, ...options };
+  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, homeCountry: null, ignorePaths: [], cacheSeconds: 600, albumTitles: {}, arrivals: null, ...options };
   return async function (request, env) {
     const url = new URL(request.url);
     if (url.pathname !== o.path && !url.pathname.startsWith(o.path + '/')) return null;
@@ -143,12 +147,13 @@ async function data(request, env, o, days) {
     }));
     for (const t of tracks) t.albumTitle = titles[t.album] || t.album;
     // Page views and clicks counted by the site itself (hits.js).
-    const [towns, clicks, views] = await Promise.all([
+    const [towns, clicks, views, arrivals] = await Promise.all([
       q(`SELECT city, region, country, COUNT(*) AS views FROM hits WHERE ts >= ? AND kind = 'view' GROUP BY city, region, country ORDER BY views DESC LIMIT 15`, since),
       q(`SELECT target, COUNT(*) AS clicks FROM hits WHERE ts >= ? AND kind = 'click' GROUP BY target ORDER BY clicks DESC LIMIT 15`, since),
       q(`SELECT COUNT(*) AS views FROM hits WHERE ts >= ? AND kind = 'view'`, since),
-    ]).catch(() => [[], [], [{ views: 0 }]]); // a database from v0.1.0 has no hits table
-    out.hits = { towns, clicks, views: views[0].views };
+      q(`SELECT target, COUNT(*) AS arrivals FROM hits WHERE ts >= ? AND kind = 'arrive' GROUP BY target ORDER BY arrivals DESC LIMIT 15`, since),
+    ]).catch(() => [[], [], [{ views: 0 }], []]); // a database from v0.1.0 has no hits table
+    out.hits = { towns, clicks, views: views[0].views, arrivals };
     out.plays = { tracks, byDay: perDay(o, days, byDay.map((x) => [x.hour * 3600e3, x.streams])), countries, pages, allTime: allTime[0] };
   }
   if (env.STATS_API_TOKEN && env.CF_ACCOUNT_ID && env.RUM_SITE_TAG) {
@@ -165,11 +170,23 @@ async function data(request, env, o, days) {
 // Hourly counts → one number per day of the period in o.timeZone, quiet
 // days included, oldest first: [{ day: 'YYYY-MM-DD', n }].
 function perDay(o, days, hourly) {
+  if (days === 1) {
+    // Today is the last 24 hours, one bar an hour, labelled in o.timeZone.
+    const hf = new Intl.DateTimeFormat('en-GB', { timeZone: o.timeZone, hour: '2-digit', hourCycle: 'h23' });
+    const first = Math.floor(Date.now() / 3600e3) - 23;
+    const list = [];
+    for (let i = 0; i < 24; i++) list.push({ day: hf.format(new Date((first + i) * 3600e3)) + ':00', n: 0, hour: true });
+    for (const [ms, n] of hourly) {
+      const i = Math.floor(ms / 3600e3) - first;
+      if (i >= 0 && i < 24) list[i].n += Number(n) || 0;
+    }
+    return list;
+  }
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: o.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
   const list = [], at = {};
   for (let i = days - 1; i >= 0; i--) {
     const day = fmt.format(new Date(Date.now() - i * 86400e3));
-    if (!(day in at)) { at[day] = list.length; list.push({ day, n: 0 }); }
+    if (!(day in at)) { at[day] = list.length; list.push({ day, n: 0, wd: new Date(day + 'T12:00:00Z').getUTCDay() }); }
   }
   for (const [ms, n] of hourly) {
     const day = fmt.format(new Date(ms));
@@ -254,8 +271,8 @@ function page(o, who) {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Stats · ${esc(o.title)}</title>
 <style>
-:root { --bg: #f6f1e7; --card: #fffdf8; --fg: #1d2a22; --dim: #6b6f68; --line: #e4dccb; --accent: #b8622e; --bar: #e39a62; color-scheme: light; }
-@media (prefers-color-scheme: dark) { :root { --bg: #111814; --card: #18221c; --fg: #f0e6d2; --dim: #9aa39b; --line: #2c3a31; --bar: #b8622e; color-scheme: dark; } }
+:root { --bg: #f6f1e7; --card: #fffdf8; --fg: #1d2a22; --dim: #6b6f68; --line: #e4dccb; --accent: #b8622e; --bar: #e39a62; --bar-we: #b8622e; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg: #111814; --card: #18221c; --fg: #f0e6d2; --dim: #9aa39b; --line: #2c3a31; --bar: #b8622e; --bar-we: #e39a62; color-scheme: dark; } }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; padding: max(16px, env(safe-area-inset-top)) 16px 48px; }
 .wrap { max-width: 980px; margin: 0 auto; }
@@ -287,6 +304,10 @@ td.name { white-space: normal; }
 #out[aria-busy="true"] { opacity: 0.5; }
 .chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid var(--line); }
 .chart div { flex: 1; max-width: 40px; background: var(--bar); border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
+.chart div.we { background: var(--bar-we); }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--bar-we); margin-right: 6px; vertical-align: -1px; }
+.ticks { display: flex; gap: 2px; margin-top: 3px; }
+.ticks span { flex: 1; max-width: 40px; font-size: 0.7rem; color: var(--dim); text-align: center; white-space: nowrap; overflow: visible; }
 .chart div:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
 .note, .empty { color: var(--dim); font-size: 0.85rem; }
 </style></head><body><div class="wrap">
@@ -321,10 +342,18 @@ td.name { white-space: normal; }
       return '<div class="row"><span>' + text + '</span><span>' + fmt(value(x)) + '</span><i style="width:' + (100 * value(x) / max).toFixed(1) + '%"></i></div>';
     }).join('');
   }
-  function chart(list, value, tip) {
+  var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // Bars a day each (weekends a deeper colour, day names on a week), or an
+  // hour each for Today (every third hour named).
+  function chart(list, value) {
     if (!list || !list.length) return '<p class="empty">Nothing yet.</p>';
     var max = Math.max.apply(null, list.map(value)) || 1;
-    return '<div class="chart">' + list.map(function (x) { return '<div style="height:' + (100 * value(x) / max).toFixed(1) + '%" data-tip="' + esc(tip(x)) + '"></div>'; }).join('') + '</div>';
+    var name = function (x) { return x.hour ? x.day : WD[x.wd] + ' ' + x.day; };
+    var tick = function (x) { return x.hour ? (parseInt(x.day, 10) % 3 ? '' : x.day.slice(0, 2)) : list.length <= 7 ? WD[x.wd] : ''; };
+    var h = '<div class="chart">' + list.map(function (x) { return '<div' + (x.wd === 0 || x.wd === 6 ? ' class="we"' : '') + ' style="height:' + (100 * value(x) / max).toFixed(1) + '%" data-tip="' + esc(name(x) + ': ' + value(x)) + '"></div>'; }).join('') + '</div>';
+    if (list[0].hour || list.length <= 7) h += '<div class="ticks">' + list.map(function (x) { return '<span>' + esc(tick(x)) + '</span>'; }).join('') + '</div>';
+    else h += '<p class="note"><span class="key"></span>Saturdays and Sundays</p>';
+    return h;
   }
   function draw(d) {
     var v = d.visits, p = d.plays, hi = d.hits, h = '';
@@ -348,10 +377,10 @@ td.name { white-space: normal; }
       h += '<div class="card wide"><h2>Tracks</h2><div class="scroll"><table><thead><tr><th>Track</th><th>Album</th><th class="num">Streams</th><th class="num">Starts</th><th class="num">Played to the end</th></tr></thead><tbody>' +
         (p.tracks.length ? p.tracks.map(function (x) { return '<tr><td class="name">' + esc(x.title) + '</td><td>' + esc(x.albumTitle || x.album) + '</td><td class="num">' + fmt(x.streams) + '</td><td class="num">' + fmt(x.starts) + '</td><td class="num">' + fmt(x.completes) + '</td></tr>'; }).join('') : '<tr><td colspan="5" class="empty">Nothing played yet.</td></tr>') +
         '</tbody></table></div></div>';
-      h += '<div class="card"><h2>Streams by day</h2>' + chart(p.byDay, function (x) { return x.n; }, function (x) { return x.day + ': ' + x.n; }) + '</div>';
+      h += '<div class="card"><h2>Streams by ' + (d.days === 1 ? 'hour' : 'day') + '</h2>' + chart(p.byDay, function (x) { return x.n; }) + '</div>';
     }
     if (v && !v.error) {
-      h += '<div class="card"><h2>Visits by day</h2>' + chart(v.days, function (x) { return x.n; }, function (x) { return x.day + ': ' + x.n; }) + '</div>';
+      h += '<div class="card"><h2>Visits by ' + (d.days === 1 ? 'hour' : 'day') + '</h2>' + chart(v.days, function (x) { return x.n; }) + '</div>';
       h += '<div class="card"><h2>Pages</h2>' + rows(v.pages, function (x) { return x.dimensions.requestPath; }, function (x) { return x.count; }, function (x) { return pageLink(x.dimensions.requestPath); }) + '</div>';
       h += '<div class="card"><h2>Where visitors came from</h2>' + rows(v.refs, function (x) { return x.label || x.dimensions.refererHost || 'Direct or unknown'; }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Visitors\\' countries</h2>' + rows(v.countries, function (x) { return country(x.dimensions.countryName); }, function (x) { return x.sum.visits; }) + '</div>';
@@ -361,6 +390,13 @@ td.name { white-space: normal; }
     if (hi && (hi.views || hi.clicks.length)) {
       h += '<div class="card"><h2>Where visitors are</h2>' + rows(hi.towns, town, function (x) { return x.views; }) + '</div>';
       h += '<div class="card"><h2>Links clicked</h2>' + rows(hi.clicks, function (x) { return x.target === 'mailto' ? 'Email links' : x.target === 'tel' ? 'Phone links' : x.target.replace(/\\/$/, ''); }, function (x) { return x.clicks; }) + '</div>';
+    }
+    // Visits that came by a tagged link (a newsletter, say), written by the
+    // site itself as hits of kind 'arrive'. o.arrivals titles the card and
+    // shows it while it's still empty.
+    var arrivalsTitle = ${JSON.stringify(o.arrivals || '')};
+    if (hi && (arrivalsTitle || hi.arrivals.length)) {
+      h += '<div class="card"><h2>' + esc(arrivalsTitle || 'Arrived by tagged link') + '</h2>' + rows(hi.arrivals, function (x) { return x.target; }, function (x) { return x.arrivals; }) + '</div>';
     }
     if (p) {
       h += '<div class="card"><h2>Where listeners are</h2>' + rows(p.countries, town, function (x) { return x.streams; }) + '</div>';
