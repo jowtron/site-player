@@ -36,6 +36,13 @@
  *   ignorePaths  exact paths that aren't pages people read, e.g. ['/player']
  *                for a player in an iframe, which the beacon counts as a
  *                page view every time a page loads.
+ *   cacheSeconds how long a period's numbers are kept at the edge (default
+ *                600). Web Analytics takes 1–3 s to answer, and the page
+ *                fetches every period once it has drawn the first, so
+ *                switching between them is instant.
+ *   albumTitles  names for album slugs under Tracks, e.g. { radio: 'Radio
+ *                show' }, for plays recorded by something other than
+ *                worker.js (otherwise read from albumJson, else the slug).
  */
 
 const DAYS = [1, 7, 30, 90];
@@ -44,7 +51,7 @@ export function statsRoutes(options = {}) {
   // timeZone: the days the charts are grouped into (daylight saving included).
   // sources: names for referring hosts under "Where visitors came from",
   // e.g. { 'cf-email.example': 'Back from newsletter signup' }.
-  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, homeCountry: null, ignorePaths: [], ...options };
+  const o = { path: '/stats', title: 'Site', playsBinding: 'PLAYS_DB', timeZone: 'Australia/Sydney', albumJson: (slug) => `/assets/albums/${slug}.json`, sources: {}, homeCountry: null, ignorePaths: [], cacheSeconds: 600, albumTitles: {}, ...options };
   return async function (request, env) {
     const url = new URL(request.url);
     if (url.pathname !== o.path && !url.pathname.startsWith(o.path + '/')) return null;
@@ -54,7 +61,7 @@ export function statsRoutes(options = {}) {
     if (url.pathname === o.path + '/') return page(o, who);
     if (url.pathname === o.path + '/data') {
       const days = DAYS.includes(Number(url.searchParams.get('days'))) ? Number(url.searchParams.get('days')) : 30;
-      return data(request, env, o, days);
+      return cached(url, days, o, () => data(request, env, o, days));
     }
     return new Response('Not found', { status: 404 });
   };
@@ -95,6 +102,25 @@ function b64(s) {
 }
 
 // ── The numbers ───────────────────────────────────────────────────────────
+// A period's numbers, kept in the edge cache for o.cacheSeconds. Only ever
+// reached after accessUser, and handed back no-store, so the browser never
+// keeps them.
+const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' };
+async function cached(url, days, o, make) {
+  const cache = o.cacheSeconds > 0 && typeof caches !== 'undefined' ? caches.default : null;
+  const key = new Request(`${url.origin}${o.path}/data?days=${days}`);
+  if (cache) {
+    const hit = await cache.match(key).catch(() => null);
+    if (hit) return new Response(hit.body, { headers: JSON_HEADERS });
+  }
+  const res = await make();
+  if (cache && res.ok) {
+    const body = await res.clone().text();
+    await cache.put(key, new Response(body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${o.cacheSeconds}` } })).catch(() => {});
+  }
+  return res;
+}
+
 async function data(request, env, o, days) {
   const since = Date.now() - days * 86400e3;
   const out = { days, plays: null, visits: null };
@@ -111,8 +137,8 @@ async function data(request, env, o, days) {
       q(`SELECT SUM(event = 'stream') AS streams, MIN(ts) AS first FROM plays`),
     ]);
     // Album titles from the build's album files (the table stores slugs).
-    const titles = {};
-    await Promise.all([...new Set(tracks.map((t) => t.album))].map(async (slug) => {
+    const titles = { ...o.albumTitles };
+    await Promise.all([...new Set(tracks.map((t) => t.album))].filter((slug) => !titles[slug]).map(async (slug) => {
       try { titles[slug] = (await (await env.ASSETS.fetch(new URL(o.albumJson(slug), request.url))).json()).title; } catch { /* keep the slug */ }
     }));
     for (const t of tracks) t.albumTitle = titles[t.album] || t.album;
@@ -133,7 +159,7 @@ async function data(request, env, o, days) {
       delete out.visits.hours;
     }
   }
-  return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' } });
+  return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
 
 // Hourly counts → one number per day of the period in o.timeZone, quiet
@@ -185,7 +211,7 @@ async function visits(env, since, o, host) {
     totals: merge('totals', () => 'all'),
     automated: o.homeCountry ? merge('automated', () => 'all') : null,
     hours: merge('hours', byDim('datetimeHour')),
-    pages: merge('pages', byDim('requestPath'), (x) => x.count, 12),
+    pages: merge('pages', byDim('requestPath'), (x) => x.count, 20),
     // Page-to-page moves inside the site count 0 visits; Cloudflare Access's
     // sign-in page (coming back from signing in to the stats) isn't a source.
     refs: merge('refs', byDim('refererHost'), (x) => x.sum.visits)
@@ -255,6 +281,10 @@ td.name { white-space: normal; }
 .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); position: relative; }
 .row i { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--bar); }
 .row span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row a { color: inherit; text-decoration: none; }
+.row a:hover { color: var(--accent); text-decoration: underline; }
+#out { transition: opacity 0.15s; }
+#out[aria-busy="true"] { opacity: 0.5; }
 .chart { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid var(--line); }
 .chart div { flex: 1; max-width: 40px; background: var(--bar); border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
 .chart div:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
@@ -280,10 +310,16 @@ td.name { white-space: normal; }
     if (x.country && x.country !== home) parts.push(country(x.country));
     return parts.join(', ') || country(x.country);
   };
-  function rows(list, label, value) {
+  // A path on this site, as a link that opens beside the stats.
+  var pageLink = function (p) { return /^\\/(?!\\/)/.test(p || '') ? p : null; };
+  function rows(list, label, value, href) {
     if (!list || !list.length) return '<p class="empty">Nothing yet.</p>';
     var max = Math.max.apply(null, list.map(value)) || 1;
-    return list.map(function (x) { return '<div class="row"><span>' + esc(label(x) || '(none)') + '</span><span>' + fmt(value(x)) + '</span><i style="width:' + (100 * value(x) / max).toFixed(1) + '%"></i></div>'; }).join('');
+    return list.map(function (x) {
+      var text = esc(label(x) || '(none)'), to = href && href(x);
+      if (to) text = '<a href="' + esc(to) + '" target="_blank" rel="noopener">' + text + '</a>';
+      return '<div class="row"><span>' + text + '</span><span>' + fmt(value(x)) + '</span><i style="width:' + (100 * value(x) / max).toFixed(1) + '%"></i></div>';
+    }).join('');
   }
   function chart(list, value, tip) {
     if (!list || !list.length) return '<p class="empty">Nothing yet.</p>';
@@ -316,30 +352,40 @@ td.name { white-space: normal; }
     }
     if (v && !v.error) {
       h += '<div class="card"><h2>Visits by day</h2>' + chart(v.days, function (x) { return x.n; }, function (x) { return x.day + ': ' + x.n; }) + '</div>';
-      h += '<div class="card"><h2>Pages</h2>' + rows(v.pages, function (x) { return x.dimensions.requestPath; }, function (x) { return x.count; }) + '</div>';
+      h += '<div class="card"><h2>Pages</h2>' + rows(v.pages, function (x) { return x.dimensions.requestPath; }, function (x) { return x.count; }, function (x) { return pageLink(x.dimensions.requestPath); }) + '</div>';
       h += '<div class="card"><h2>Where visitors came from</h2>' + rows(v.refs, function (x) { return x.label || x.dimensions.refererHost || 'Direct or unknown'; }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Visitors\\' countries</h2>' + rows(v.countries, function (x) { return country(x.dimensions.countryName); }, function (x) { return x.sum.visits; }) + '</div>';
       h += '<div class="card"><h2>Devices</h2>' + rows(v.devices, function (x) { return x.dimensions.deviceType; }, function (x) { return x.sum.visits; }) + '</div>';
     }
-    if (hi) {
+    // A site that doesn't send hits.js has an empty hits table: no cards.
+    if (hi && (hi.views || hi.clicks.length)) {
       h += '<div class="card"><h2>Where visitors are</h2>' + rows(hi.towns, town, function (x) { return x.views; }) + '</div>';
       h += '<div class="card"><h2>Links clicked</h2>' + rows(hi.clicks, function (x) { return x.target === 'mailto' ? 'Email links' : x.target === 'tel' ? 'Phone links' : x.target.replace(/\\/$/, ''); }, function (x) { return x.clicks; }) + '</div>';
     }
     if (p) {
       h += '<div class="card"><h2>Where listeners are</h2>' + rows(p.countries, town, function (x) { return x.streams; }) + '</div>';
-      h += '<div class="card"><h2>Pages where play was pressed</h2>' + rows(p.pages, function (x) { return x.path; }, function (x) { return x.starts; }) + '</div>';
+      h += '<div class="card"><h2>Pages where play was pressed</h2>' + rows(p.pages, function (x) { return x.path; }, function (x) { return x.starts; }, function (x) { return pageLink(x.path); }) + '</div>';
     }
     out.innerHTML = h + '</div>';
+  }
+  // Each period is fetched once per visit to the page and kept; once the
+  // first has drawn, the rest are fetched behind it, so switching is instant.
+  var got = {};
+  function get(days) {
+    if (!got[days]) got[days] = fetch('data?days=' + days, { credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+    got[days].catch(function () { delete got[days]; }); // a failure is asked again next time
+    return got[days];
   }
   var asked = 0; // only the latest request draws (a slow 90 days mustn't overwrite a quick 7)
   function load(days) {
     var mine = ++asked;
     document.querySelectorAll('[data-days]').forEach(function (b) { b.setAttribute('aria-pressed', String(Number(b.dataset.days) === days)); });
-    fetch('data?days=' + days, { credentials: 'same-origin' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (d) { if (mine === asked) draw(d); }, function (e) { if (mine !== asked) return; out.innerHTML = '<p class="note">Could not load the numbers (' + esc(e.message) + ').</p>'; });
+    out.setAttribute('aria-busy', 'true');
+    return get(days).then(function (d) { if (mine === asked) { out.removeAttribute('aria-busy'); draw(d); } },
+      function (e) { if (mine !== asked) return; out.removeAttribute('aria-busy'); out.innerHTML = '<p class="note">Could not load the numbers (' + esc(e.message) + ').</p>'; });
   }
   document.addEventListener('click', function (e) { var b = e.target.closest('[data-days]'); if (b) load(Number(b.dataset.days)); });
-  load(30);
+  load(30).then(function () { [${DAYS.join(', ')}].forEach(function (d) { get(d).catch(function () {}); }); });
 })();
 </script></body></html>`;
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' } });
