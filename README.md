@@ -104,6 +104,30 @@ export default {
 
   `stats.js` checks Access's signed token itself and answers 404 unless both are set, so a missing or mis-set Access policy never leaves the page open.
 
+## Stats on a site without the player
+
+The stats page works on its own. Three sites use it that way: emus.space (a Pages Function, with its own radio player and newsletter arrivals), and safeinsound.com.au and robbieavenaim.com (one stand-alone Worker on `/stats` routes, in the safeinsound repo's `workers/stats/`). Installing `site-player` still brings the player's files along; only `stats.js` is used.
+
+**1. Web Analytics only (visits, pages, sources, countries, devices).** Nothing to add to the site's pages.
+
+1. Check the beacon is on: `cloudflareinsights` in a page's source. Note the site tag (Analytics & Logs → Web Analytics).
+2. An API token with **Account → Account Analytics → Read** on that account only. Set it as the secret `STATS_API_TOKEN` (`wrangler secret put`, or the Pages project's settings).
+3. Cloudflare Access on `/stats` (see "Who can see it" above): team name → `ACCESS_TEAM`, the application's AUD → `ACCESS_AUD`. Until both are set the page answers 404.
+4. Vars `CF_ACCOUNT_ID` and `RUM_SITE_TAG`.
+5. Route `/stats` and `/stats/*` to `statsRoutes({ title, homeCountry: 'AU' })`:
+   - a Worker site: in its fetch, as in step 4 of "Adding it to a site", with `/stats*` in `run_worker_first`;
+   - a Pages site: `functions/stats/[[path]].js` returning `(await stats(context.request, context.env)) || context.next()`, with `/stats` and `/stats/*` in `_routes.json`;
+   - a site whose build can't take a Worker change: a separate Worker with routes `<host>/stats` and `<host>/stats/*` (never a bare `/stats*`), which win over the site's Custom Domain on the same hostname. One Worker can serve several sites by hostname.
+6. Load `/stats/`: an Access sign-in, then the page. `curl -I` should give `302` to `….cloudflareaccess.com`.
+
+**2. Towns, clicks and plays.** Add a D1 database (`wrangler d1 create <site>-plays`, then run `schema.sql` on it) bound as `PLAYS_DB` to whatever serves `/stats`.
+
+- **Page views, towns and outbound clicks:** load `hits.js` on every page and serve `POST /api/hit` (`playerRoutes()` does, or copy its handler).
+- **Plays from the site's own player:** write rows to `plays` yourself: `ts` (ms), `event` (`start`, `stream` after 30 s actually heard, `complete`), `album` (a slug), `n` (track number), `title`, and the town from `request.cf` (`country`, `region`, `city`). emus's `functions/api/plays.js` is a worked example. Name album slugs on the page with `albumTitles`.
+- **Visits from a newsletter:** tag the newsletter's links (emus uses `?nl=<issue>`), have the page send the tag once it's been visible a couple of seconds and skip `navigator.webdriver`, and write a `hits` row with `kind` `arrive` and `target` naming the issue (e.g. `Newsletter #280`). Set `arrivals: 'From the newsletter'`. emus's `functions/api/arrive.js` and `layouts/partials/newsletter-arrival.html` are the example. Only links tagged this way count; untagged newsletter clicks still show under "Where visitors came from" if the mail client passes a referrer.
+
+Never store an IP, cookie or visitor id in either table.
+
 ## Gotchas
 
 - **Two chevrons.** `.mp-btn` sets `display: grid`, so the rule hiding the collapse chevron in the small player must beat it: it's scoped to `.mini-player` and comes after `.mp-btn`.
