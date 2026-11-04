@@ -397,13 +397,15 @@
       .then(function (html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
         opts.beforeSwap();
+        // The address changes before the new page goes in, so its relative
+        // links and pictures resolve against its own URL, not the old page's.
+        if (push) history.pushState({ sp: 1 }, '', url);
         $$(':scope > *', document.body).forEach(function (el) { if (!el.hasAttribute('data-persist')) el.remove(); });
         var before = document.body.firstChild;
         // The incoming page's own copies of the kept elements are left out,
         // or every swap would add another (a second mock-up pill, sky, …).
         $$(':scope > *', doc.body).forEach(function (el) { if (!el.hasAttribute('data-persist')) document.body.insertBefore(document.adoptNode(el), before); });
         document.title = doc.title;
-        if (push) history.pushState({ sp: 1 }, '', url);
         pjaxed = true;
         history.scrollRestoration = 'manual';
         var hash = new URL(url, location.href).hash;
